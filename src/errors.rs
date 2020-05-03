@@ -1,8 +1,9 @@
+use std::cmp::PartialEq;
 use std::error;
 use std::fmt;
 
-/// Create an `enum` to classify an api error.
-#[derive(Debug, Clone)]
+/// Create an `enum` to classify api error.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ErrType {
     RequestErr,
     ResponseErr,
@@ -37,6 +38,10 @@ impl error::Error for APIError {
 
 impl fmt::Display for APIError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "t:{}; m:{}; j:{}; r:{}", self.err_type, self.reason, self.job_id, self.request_id)
+        write!(
+            f,
+            "t:{}; m:{}; j:{}; r:{}",
+            self.err_type, self.reason, self.job_id, self.request_id
+        )
     }
 }
