@@ -164,6 +164,7 @@ impl Client {
             });
         }
 
+        let (job_id, request_id, status_code) = ret.unwrap();
         if !status_code.is_success() {
             return Err(APIError {
                 err_type: ErrType::ResponseErr,
@@ -173,7 +174,6 @@ impl Client {
             }); 
         }
 
-        let (job_id, request_id, status_code) = ret.unwrap();
         return Ok((job_id, request_id));
     }
 }
