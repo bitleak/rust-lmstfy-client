@@ -1,7 +1,7 @@
-use std::path::Path;
-use serde::Deserialize;
-use reqwest::{header::HeaderValue, Client as HTTPClient, StatusCode};
 use crate::errors::{APIError, ErrType};
+use reqwest::{header::HeaderValue, Client as HTTPClient, Method, Response, StatusCode};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 /// Max read timeout value in second
 const MAX_READ_TIMEOUT: u32 = 600;
 /// Max batch consume size
@@ -21,13 +21,13 @@ pub struct Client {
     pub port: u32,
     /// Retry when `publish` failed
     pub retry: u32,
-    /// backoff time when retrying
+    /// TODO: backoff time when retrying
     pub backoff: u32,
     /// http client which is used to communicate with server
     pub http_client: HTTPClient,
 }
 
-/// The normal response for publishing tasks 
+/// The normal response for publishing tasks
 #[derive(Deserialize)]
 pub struct PublishResponse {
     /// The job id corresponding to the published task
@@ -37,9 +37,9 @@ pub struct PublishResponse {
 /// The client implementation
 impl Client {
     /// Returns a client with the given parameters
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `namespace` - A str that holds the namespace of the client
     /// * `token` - A str that holds the token for api request
     /// * `host` - A str that holds the target server
@@ -65,10 +65,60 @@ impl Client {
         }
     }
 
-    /// Innner function to publish task
-    /// 
+    /// Request for a response
+    ///
     /// # Arguments
-    /// 
+    ///
+    /// * `method` - A http method, such as GET/PUT/POST etc
+    /// * `relative_path` - A str that holds the relative url path
+    /// * `query` - A option that holds query pairs if any
+    /// * `body` - A vector that holds body data if any
+    async fn request<T: Serialize + ?Sized>(
+        &self,
+        method: Method,
+        relative_path: &str,
+        query: Option<&T>,
+        body: Option<Vec<u8>>,
+    ) -> std::result::Result<(String, reqwest::Response), reqwest::Error> {
+        let url = format!("http://{}:{}", self.host, self.port);
+        let url = Path::new(&url)
+            .join("api")
+            .join(&self.namespace)
+            .join(relative_path)
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        println!("url = {}", url);
+
+        let mut builder = self.http_client.request(method, &url);
+
+        if query.is_some() {
+            builder = builder.query(query.unwrap())
+        }
+
+        if body.is_some() {
+            builder = builder.body(body.unwrap())
+        }
+
+        let response = builder.header("X-Token", &self.token).send().await?;
+
+        println!("got response");
+        let request_id = response
+            .headers()
+            .get("X-Request-ID")
+            .unwrap_or(&HeaderValue::from_str("").unwrap())
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        Ok((request_id, response))
+    }
+
+    /// Innner function to publish task
+    ///
+    /// # Arguments
+    ///
     /// * `queue` - A string that holds the queue for the task
     /// * `ack_job_id` - A string that holds the job id about to acknowledged
     /// * `data` - A vector of byte that holds the content of task
@@ -85,7 +135,7 @@ impl Client {
         delay: u32,
     ) -> std::result::Result<(String, String, StatusCode), reqwest::Error> {
         let mut relative_path = queue.clone();
-        if ack_job_id == "" {
+        if ack_job_id != "" {
             relative_path = Path::new(&relative_path)
                 .join("job")
                 .join(ack_job_id)
@@ -94,34 +144,15 @@ impl Client {
                 .to_string();
         }
 
-        let url = format!("http://{}:{}", self.host, self.port);
-        let url = Path::new(&url)
-            .join("api")
-            .join(&self.namespace)
-            .join(relative_path)
-            .to_str()
-            .unwrap()
-            .to_string();
-
-        println!("url = {}", url);
-
-        let response = self
-            .http_client
-            .put(&url)
-            .query(&[("ttl", ttl), ("tries", tries), ("delay", delay)])
-            .header("X-Token", &self.token)
-            .body(data)
-            .send()
+        let query = [("ttl", ttl), ("tries", tries), ("delay", delay)];
+        let (request_id, response) = self
+            .request(
+                Method::PUT,
+                relative_path.as_str(),
+                Some(&query),
+                Some(data),
+            )
             .await?;
-
-        println!("got response");
-        let request_id = response
-            .headers()
-            .get("X-Request-ID")
-            .unwrap_or(&HeaderValue::from_str("").unwrap())
-            .to_str()
-            .unwrap()
-            .to_string();
 
         let status_code = response.status();
         let response = response.json::<PublishResponse>().await?;
@@ -133,10 +164,10 @@ impl Client {
 /// The API implementation for lmstfy
 impl Client {
     // Publish task to the server
-    /// 
+    ///
     /// # Arguments
-    /// 
-    /// * `queue` - A String that holds the queue for the task
+    ///
+    /// * `queue` - A string that holds the queue for the task
     /// * `ack_job_id` - A string that holds the job id about to acknowledged
     /// * `data` - A vector of byte that holds the content of task
     /// * `ttl` - A u32 value that holds the time-to-live value
@@ -171,9 +202,50 @@ impl Client {
                 reason: status_code.canonical_reason().unwrap().to_string(),
                 job_id: job_id,
                 request_id: request_id,
-            }); 
+            });
         }
 
         return Ok((job_id, request_id));
+    }
+
+    /// Mark a job as finished, so it won't be retried by others
+    ///
+    /// # Arguments
+    ///
+    /// * queue - A string that holds the queue for the job
+    /// * job_id - A string that holds the job id
+    pub async fn ack(&self, queue: String, job_id: String) -> Result<()> {
+        let relative_path = Path::new(&queue)
+            .join("job")
+            .join(job_id.clone())
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let ret = self
+            .request::<(String, u32)>(Method::DELETE, relative_path.as_str(), None, None)
+            .await;
+
+        if ret.is_err() {
+            return Err(APIError {
+                err_type: ErrType::RequestErr,
+                reason: ret.unwrap_err().to_string(),
+                job_id: job_id,
+                request_id: "".to_string(),
+            })
+        }
+
+        let (request_id, response) = ret.unwrap();
+        let status_code = response.status();
+        if status_code != StatusCode::NO_CONTENT {
+            return Err(APIError {
+                err_type: ErrType::ResponseErr,
+                reason: status_code.canonical_reason().unwrap().to_string(),
+                job_id: job_id,
+                request_id: request_id,
+            })
+        }
+
+        Ok(())
     }
 }
