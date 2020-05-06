@@ -37,12 +37,24 @@ async fn ack_to_invalid_job_id_should_return_error() {
 
     let client = api::Client::new(namespace, token, host, port, retry, back_off);
     let ret = client
-        .ack(
-            "habit".to_string(),
-            "invalid_job_id".to_string(),
-        )
+        .ack("habit".to_string(), "invalid_job_id".to_string())
         .await;
 
     println!("ret = {:#?}", ret);
     assert_eq!(ret.unwrap_err().err_type, errors::ErrType::RequestErr);
+}
+
+#[tokio::test]
+async fn consume_should_work() {
+
+}
+
+#[tokio::test]
+async fn batch_consume_should_work() {
+    
+}
+
+#[tokio::test]
+async fn consume_from_queues_should_work() {
+    
 }

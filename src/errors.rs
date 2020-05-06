@@ -10,6 +10,12 @@ pub enum ErrType {
     Other,
 }
 
+impl Default for ErrType {
+    fn default() -> Self {
+        ErrType::Other
+    }
+}
+
 impl fmt::Display for ErrType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let printable = match *self {
@@ -22,7 +28,7 @@ impl fmt::Display for ErrType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct APIError {
     pub err_type: ErrType,
     pub reason: String,
