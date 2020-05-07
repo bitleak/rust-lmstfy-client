@@ -60,6 +60,24 @@ pub struct QueueInfo {
     pub size: u32,
 }
 
+#[derive(Deserialize)]
+pub struct DeadLetterInfo {
+    /// The namespace of the queue
+    pub namespace: String,
+    /// The queue name
+    pub queue: String,
+    /// The size of the dead letters
+    pub size: u32,
+    /// The header of the letters
+    pub header: String,
+}
+
+#[derive(Deserialize)]
+pub struct RespawnResult {
+    /// The count of respawned dead letters
+    pub count: u32,
+}
+
 /// The client implementation
 impl Client {
     /// Returns a client with the given parameters
@@ -285,6 +303,58 @@ impl Client {
             ..APIError::default()
         })
     }
+
+    /// Inner function to peek a job
+    ///
+    /// # Arguments
+    ///
+    /// * queue - A string that holds the queue name
+    /// * job_id - An option of string that holds the job id
+    async fn do_peek_job(&self, queue: String, job_id: Option<String>) -> Result<Option<Job>> {
+        let path = Path::new(&queue);
+
+        let path_buf = if job_id.is_none() {
+            path.join("peek")
+        } else {
+            path.join("job").join(&job_id.unwrap())
+        };
+
+        let relative_path = path_buf.to_str().unwrap().to_string();
+
+        let ret = self
+            .request::<(String, u32)>(Method::GET, relative_path.as_str(), None, None)
+            .await;
+
+        if ret.is_err() {
+            return Err(APIError {
+                err_type: ErrType::RequestErr,
+                reason: ret.unwrap_err().to_string(),
+                ..APIError::default()
+            });
+        }
+
+        let (request_id, response) = ret.unwrap();
+        let status_code = response.status();
+        match status_code {
+            StatusCode::NOT_FOUND => Ok(None),
+            StatusCode::OK => response
+                .json::<Job>()
+                .await
+                .map(|job| Some(job))
+                .map_err(|e| APIError {
+                    err_type: ErrType::ResponseErr,
+                    reason: e.to_string(),
+                    request_id: request_id,
+                    ..APIError::default()
+                }),
+            _ => Err(APIError {
+                err_type: ErrType::ResponseErr,
+                reason: status_code.canonical_reason().unwrap().to_string(),
+                job_id: "".to_string(),
+                request_id: request_id,
+            }),
+        }
+    }
 }
 
 /// The API implementation for lmstfy
@@ -430,16 +500,16 @@ impl Client {
 
         let (request_id, response) = ret.unwrap();
         let status_code = response.status();
-        if status_code != StatusCode::NO_CONTENT {
-            return Err(APIError {
+
+        match status_code {
+            StatusCode::NO_CONTENT => Ok(()),
+            _ => Err(APIError {
                 err_type: ErrType::ResponseErr,
                 reason: status_code.canonical_reason().unwrap().to_string(),
                 job_id: job_id,
                 request_id: request_id,
-            });
+            }),
         }
-
-        Ok(())
     }
 
     /// Get the queue size.
@@ -469,24 +539,153 @@ impl Client {
 
         let (request_id, response) = ret.unwrap();
         let status_code = response.status();
-        if status_code != StatusCode::OK {
-            return Err(APIError {
+
+        match status_code {
+            StatusCode::OK => response
+                .json::<QueueInfo>()
+                .await
+                .map(|info| info.size)
+                .map_err(|e| APIError {
+                    err_type: ErrType::ResponseErr,
+                    reason: e.to_string(),
+                    request_id: request_id,
+                    ..APIError::default()
+                }),
+            _ => Err(APIError {
                 err_type: ErrType::ResponseErr,
                 reason: status_code.canonical_reason().unwrap().to_string(),
                 job_id: "".to_string(),
                 request_id: request_id,
+            }),
+        }
+    }
+
+    /// Peek job from queue without consuming
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - A string that holds the queue name
+    pub async fn peek_queue(&self, queue: String) -> Result<Option<Job>> {
+        self.do_peek_job(queue, None).await
+    }
+
+    /// Peek a specified job
+    ///
+    /// # Arguments
+    ///
+    /// * queue - A string that holds the queue name
+    /// * job_id - A string that holds the job id
+    pub async fn peek_job(&self, queue: String, job_id: String) -> Result<Option<Job>> {
+        self.do_peek_job(queue, Some(job_id)).await
+    }
+
+    /// Peek the deadletter of the queue
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - A string that holds the queue name
+    pub async fn peek_dead_letter(&self, queue: String) -> Result<(u32, String)> {
+        let relative_path = Path::new(&queue)
+            .join("deadletter")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let ret = self
+            .request::<(String, u32)>(Method::GET, relative_path.as_str(), None, None)
+            .await;
+
+        if ret.is_err() {
+            return Err(APIError {
+                err_type: ErrType::RequestErr,
+                reason: ret.unwrap_err().to_string(),
+                ..APIError::default()
             });
         }
 
-        response
-            .json::<QueueInfo>()
-            .await
-            .map(|info| info.size)
-            .map_err(|e| APIError {
+        let (request_id, response) = ret.unwrap();
+        let status_code = response.status();
+        match status_code {
+            StatusCode::OK => response
+                .json::<DeadLetterInfo>()
+                .await
+                .map(|info| (info.size, info.header))
+                .map_err(|e| APIError {
+                    err_type: ErrType::ResponseErr,
+                    reason: e.to_string(),
+                    request_id: request_id,
+                    ..APIError::default()
+                }),
+            _ => Err(APIError {
                 err_type: ErrType::ResponseErr,
-                reason: e.to_string(),
+                reason: status_code.canonical_reason().unwrap().to_string(),
+                job_id: "".to_string(),
                 request_id: request_id,
+            }),
+        }
+    }
+
+    /// Respawn dead letter
+    ///
+    /// # Arguments
+    /// * `queue` - A string that holds the queue name
+    /// * `limit` - A i64 value that holds the limit
+    /// * `ttl` - A i64 value that holds the time-to-live value in second
+    pub async fn respawn_dead_letter(&self, queue: String, limit: i64, ttl: i64) -> Result<u32> {
+        if limit <= 0 {
+            return Err(APIError {
+                err_type: ErrType::RequestErr,
+                reason: "limit should be > 0".to_string(),
                 ..APIError::default()
-            })
+            });
+        }
+
+        if ttl <= 0 {
+            return Err(APIError {
+                err_type: ErrType::RequestErr,
+                reason: "ttl should be > 0".to_string(),
+                ..APIError::default()
+            });
+        }
+
+        let relative_path = Path::new(&queue)
+            .join("deadletter")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let query = [("limit", limit), ("ttl", ttl)];
+        let ret = self
+            .request(Method::PUT, relative_path.as_str(), Some(&query), None)
+            .await;
+
+        if ret.is_err() {
+            return Err(APIError {
+                err_type: ErrType::RequestErr,
+                reason: ret.unwrap_err().to_string(),
+                ..APIError::default()
+            });
+        }
+
+        let (request_id, response) = ret.unwrap();
+        let status_code = response.status();
+        match status_code {
+            StatusCode::OK => response
+                .json::<RespawnResult>()
+                .await
+                .map(|rr| rr.count)
+                .map_err(|e| APIError {
+                    err_type: ErrType::ResponseErr,
+                    reason: e.to_string(),
+                    request_id: request_id,
+                    ..APIError::default()
+                }),
+            _ => Err(APIError {
+                err_type: ErrType::ResponseErr,
+                reason: status_code.canonical_reason().unwrap().to_string(),
+                job_id: "".to_string(),
+                request_id: request_id,
+            }),
+        }
     }
 }
