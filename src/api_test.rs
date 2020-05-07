@@ -45,16 +45,13 @@ async fn ack_to_invalid_job_id_should_return_error() {
 }
 
 #[tokio::test]
-async fn consume_should_work() {
-
-}
+async fn consume_should_work() {}
 
 #[tokio::test]
-async fn batch_consume_should_work() {
-    
-}
+async fn batch_consume_should_work() {}
 
 #[tokio::test]
-async fn consume_from_queues_should_work() {
-    
-}
+async fn consume_from_queues_should_work() {}
+
+#[tokio::test]
+async fn queue_size_should_work() {}

@@ -50,6 +50,16 @@ pub struct Job {
     pub elapsed: u64,
 }
 
+#[derive(Deserialize)]
+pub struct QueueInfo {
+    /// The namespace of the queue
+    pub namespace: String,
+    /// The queue name
+    pub queue: String,
+    /// The size of the queue
+    pub size: u32,
+}
+
 /// The client implementation
 impl Client {
     /// Returns a client with the given parameters
@@ -205,7 +215,7 @@ impl Client {
                 err_type: ErrType::RequestErr,
                 reason: "ttr should be > 0".to_string(),
                 ..APIError::default()
-            })
+            });
         }
 
         if timeout >= MAX_READ_TIMEOUT {
@@ -213,7 +223,7 @@ impl Client {
                 err_type: ErrType::RequestErr,
                 reason: format!("timeout should be >= 0 && < {}", MAX_READ_TIMEOUT),
                 ..APIError::default()
-            })
+            });
         }
 
         if count <= 0 || count > MAX_BATCH_CONSUME_SIZE {
@@ -221,7 +231,7 @@ impl Client {
                 err_type: ErrType::RequestErr,
                 reason: format!("count should be > 0 && < {}", MAX_BATCH_CONSUME_SIZE),
                 ..APIError::default()
-            })
+            });
         }
 
         let relative_path = queues.join(",");
@@ -328,11 +338,11 @@ impl Client {
     /// # Arguments
     ///
     /// * `queue` - A string that holds the queue for consuming
-    /// 
+    ///
     /// * `ttr` - A u32 value that holds the time-to-run value in second.
     /// If the job is not finished before the `ttr` expires, the job will be
     /// released for consuming again if the `(tries-1) > 0`
-    /// 
+    ///
     /// * `timeout` - A u32 value that holds the max waiting time for long polling
     /// If it's zero, this method will return immediately with or without a job;
     /// if it's positive, this method would polling for new job until timeout.
@@ -343,42 +353,53 @@ impl Client {
     /// Consume a batch of jobs
     ///
     /// # Arguments
-    /// 
+    ///
     /// * `queue` - A string that holds the queue for consuming
     ///
     /// * `ttr` - A u32 value that holds the time-to-run value in second.
     /// If the job is not finished before the `ttr` expires, the job will be
     /// released for consuming again if the `(tries-1) > 0`
-    /// 
+    ///
     /// * `timeout` - A u32 value that holds the max waiting time for long polling
     /// If it's zero, this method will return immediately with or without a job;
     /// if it's positive, this method would polling for new job until timeout.
-    /// 
+    ///
     /// * `count` - A u32 value that holds the count of wanted jobs
-    pub async fn batch_consume(&self, queue: String, ttr: u32, timeout: u32, count: u32) -> Result<Vec<Job>> {
+    pub async fn batch_consume(
+        &self,
+        queue: String,
+        ttr: u32,
+        timeout: u32,
+        count: u32,
+    ) -> Result<Vec<Job>> {
         self.do_consume(vec![queue], ttr, timeout, count).await
     }
 
-    /// Consume from multiple queues. Note that the order of the queues in the params 
+    /// Consume from multiple queues. Note that the order of the queues in the params
     /// implies the priority. eg. consume_from_queues(120, 5, vec!("queue-a", "queue-b", "queue-c"))
     /// if all the queues have jobs to be fetched, the job in `queue-a` will be return.
     ///
     /// # Arguments
-    /// 
+    ///
     /// * `queues` - A string vector that holds the queues for consuming
     ///
     /// * `ttr` - A u32 value that holds the time-to-run value in second.
     /// If the job is not finished before the `ttr` expires, the job will be
     /// released for consuming again if the `(tries-1) > 0`
-    /// 
+    ///
     /// * `timeout` - A u32 value that holds the max waiting time for long polling
     /// If it's zero, this method will return immediately with or without a job;
     /// if it's positive, this method would polling for new job until timeout.
-    /// 
+    ///
     /// * `count` - A u32 value that holds the count of wanted jobs
-    pub async fn consume_from_queues(&self, queues: Vec<String>, ttr: u32, timeout: u32) -> Result<Vec<Job>> {
+    pub async fn consume_from_queues(
+        &self,
+        queues: Vec<String>,
+        ttr: u32,
+        timeout: u32,
+    ) -> Result<Vec<Job>> {
         self.do_consume(queues, ttr, timeout, 1).await
-    } 
+    }
 
     /// Mark a job as finished, so it won't be retried by others
     ///
@@ -419,5 +440,53 @@ impl Client {
         }
 
         Ok(())
+    }
+
+    /// Get the queue size.
+    /// How many pending jobs are ready for consuming.
+    ///
+    /// # Arguments
+    /// * `queue` - A string that holds the queue name
+    pub async fn queue_size(&self, queue: String) -> Result<u32> {
+        let relative_path = Path::new(&queue)
+            .join(&queue)
+            .join("size")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let ret = self
+            .request::<(String, u32)>(Method::GET, relative_path.as_str(), None, None)
+            .await;
+
+        if ret.is_err() {
+            return Err(APIError {
+                err_type: ErrType::RequestErr,
+                reason: ret.unwrap_err().to_string(),
+                ..APIError::default()
+            });
+        }
+
+        let (request_id, response) = ret.unwrap();
+        let status_code = response.status();
+        if status_code != StatusCode::OK {
+            return Err(APIError {
+                err_type: ErrType::ResponseErr,
+                reason: status_code.canonical_reason().unwrap().to_string(),
+                job_id: "".to_string(),
+                request_id: request_id,
+            });
+        }
+
+        response
+            .json::<QueueInfo>()
+            .await
+            .map(|info| info.size)
+            .map_err(|e| APIError {
+                err_type: ErrType::ResponseErr,
+                reason: e.to_string(),
+                request_id: request_id,
+                ..APIError::default()
+            })
     }
 }
