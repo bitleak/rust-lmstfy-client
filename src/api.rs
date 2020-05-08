@@ -78,6 +78,12 @@ pub struct RespawnResult {
     pub count: u32,
 }
 
+#[derive(Deserialize)]
+pub struct ResponseError {
+    /// The error info returned from server
+    pub error: String,
+}
+
 /// The client implementation
 impl Client {
     /// Returns a client with the given parameters
@@ -177,7 +183,7 @@ impl Client {
         ttl: u32,
         tries: u32,
         delay: u32,
-    ) -> std::result::Result<(String, String, StatusCode), reqwest::Error> {
+    ) -> std::result::Result<(String, reqwest::Response), reqwest::Error> {
         let mut relative_path = queue.clone();
         if ack_job_id != "" {
             relative_path = Path::new(&relative_path)
@@ -189,19 +195,13 @@ impl Client {
         }
 
         let query = [("ttl", ttl), ("tries", tries), ("delay", delay)];
-        let (request_id, response) = self
-            .request(
-                Method::PUT,
-                relative_path.as_str(),
-                Some(&query),
-                Some(data),
-            )
-            .await?;
-
-        let status_code = response.status();
-        let response = response.json::<PublishResponse>().await?;
-
-        Ok((response.job_id, request_id, status_code))
+        self.request(
+            Method::PUT,
+            relative_path.as_str(),
+            Some(&query),
+            Some(data),
+        )
+        .await
     }
 
     /// Inner function to consume a job
@@ -277,7 +277,7 @@ impl Client {
         if status_code != StatusCode::OK {
             return Err(APIError {
                 err_type: ErrType::ResponseErr,
-                reason: status_code.canonical_reason().unwrap().to_string(),
+                reason: self.parse_response_error(response).await,
                 request_id: request_id,
                 ..APIError::default()
             });
@@ -349,17 +349,30 @@ impl Client {
                 }),
             _ => Err(APIError {
                 err_type: ErrType::ResponseErr,
-                reason: status_code.canonical_reason().unwrap().to_string(),
+                reason: self.parse_response_error(response).await,
                 job_id: "".to_string(),
                 request_id: request_id,
             }),
+        }
+    }
+
+    /// Inner function to parse error info from response
+    ///
+    /// # Arguments
+    ///
+    /// * `response` - A response that holds the request result
+    async fn parse_response_error(&self, response: Response) -> String {
+        let status_code = response.status();
+        match response.json::<ResponseError>().await {
+            Ok(re) => re.error,
+            Err(e) => format!("[{}]{}", status_code, e),
         }
     }
 }
 
 /// The API implementation for lmstfy
 impl Client {
-    // Publish task to the server
+    /// Publish task to the server
     ///
     /// # Arguments
     ///
@@ -390,17 +403,27 @@ impl Client {
             });
         }
 
-        let (job_id, request_id, status_code) = ret.unwrap();
-        if !status_code.is_success() {
-            return Err(APIError {
-                err_type: ErrType::ResponseErr,
-                reason: status_code.canonical_reason().unwrap().to_string(),
-                job_id: job_id,
-                request_id: request_id,
-            });
-        }
+        let (request_id, response) = ret.unwrap();
+        let status_code = response.status();
 
-        return Ok((job_id, request_id));
+        match status_code {
+            StatusCode::CREATED => response
+                .json::<PublishResponse>()
+                .await
+                .map(|pr| (pr.job_id, request_id.clone()))
+                .map_err(|e| APIError {
+                    err_type: ErrType::ResponseErr,
+                    reason: e.to_string(),
+                    request_id: request_id,
+                    ..APIError::default()
+                }),
+            _ => Err(APIError {
+                err_type: ErrType::ResponseErr,
+                reason: self.parse_response_error(response).await,
+                request_id: request_id,
+                ..APIError::default()
+            }),
+        }
     }
 
     /// Consume a job, consuming will decrease the job's retry count by 1 firstly
@@ -505,7 +528,7 @@ impl Client {
             StatusCode::NO_CONTENT => Ok(()),
             _ => Err(APIError {
                 err_type: ErrType::ResponseErr,
-                reason: status_code.canonical_reason().unwrap().to_string(),
+                reason: self.parse_response_error(response).await,
                 job_id: job_id,
                 request_id: request_id,
             }),
@@ -553,7 +576,7 @@ impl Client {
                 }),
             _ => Err(APIError {
                 err_type: ErrType::ResponseErr,
-                reason: status_code.canonical_reason().unwrap().to_string(),
+                reason: self.parse_response_error(response).await,
                 job_id: "".to_string(),
                 request_id: request_id,
             }),
@@ -618,7 +641,7 @@ impl Client {
                 }),
             _ => Err(APIError {
                 err_type: ErrType::ResponseErr,
-                reason: status_code.canonical_reason().unwrap().to_string(),
+                reason: self.parse_response_error(response).await,
                 job_id: "".to_string(),
                 request_id: request_id,
             }),
@@ -682,7 +705,7 @@ impl Client {
                 }),
             _ => Err(APIError {
                 err_type: ErrType::ResponseErr,
-                reason: status_code.canonical_reason().unwrap().to_string(),
+                reason: self.parse_response_error(response).await,
                 job_id: "".to_string(),
                 request_id: request_id,
             }),

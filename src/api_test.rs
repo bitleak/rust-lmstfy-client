@@ -56,7 +56,6 @@ async fn consume_from_queues_should_work() {}
 #[tokio::test]
 async fn queue_size_should_work() {}
 
-
 #[tokio::test]
 async fn peek_queue_should_work() {}
 
