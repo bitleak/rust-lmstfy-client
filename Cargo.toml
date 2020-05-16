@@ -15,3 +15,7 @@ readme = "README.md"
 reqwest = { version = "0.10", features = ["json"] }
 tokio = { version = "0.2", features = ["full"] }
 serde = { version = "1.0.102", features = ["derive"] }
+
+[dev-dependencies]
+envmnt = "0.8.2"
+serde_json = "1.0.53"
