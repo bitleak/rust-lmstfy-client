@@ -34,7 +34,7 @@ pub struct PublishResponse {
     job_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Job {
     /// The namespace of the job
     pub namespace: String,
@@ -43,11 +43,11 @@ pub struct Job {
     /// The data holded by the job
     pub data: Vec<u8>,
     /// The id of the job
-    pub id: String,
+    pub job_id: String,
     /// The time-to-live of the job
     pub ttl: u64,
     /// The elapsed value in ms
-    pub elapsed: u64,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Deserialize)]

@@ -41,9 +41,68 @@ macro_rules! get_config {
     }};
 }
 
+fn new_client(retry: u32, back_off: u32) -> api::Client {
+    let config = get_config!();
+
+    let retry = 3;
+    let back_off = 10;
+
+    api::Client::new(
+        &config.namespace,
+        &config.token,
+        &config.host,
+        config.port,
+        retry,
+        back_off,
+    )
+}
+
 #[test]
 fn test_env_should_be_ok() {
     let _config = get_config!();
+}
+
+#[tokio::test]
+async fn publish_message_should_be_ok() {
+    let client = new_client(3, 10);
+    let ret = client
+        .publish(
+            "rustqueue".to_string(),
+            "".to_string(),
+            vec![1, 2, 3],
+            100,
+            3,
+            0,
+        )
+        .await;
+    assert_eq!(ret.is_ok(), true, "should succeed");
+    println!("results: {:#?}", ret.unwrap());
+}
+
+#[tokio::test]
+async fn consume_message_should_be_ok() {
+    let client = new_client(3, 10);
+    let queue = "rustqueue";
+    let message = "hello, world";
+    let ret = client
+        .publish(
+            String::from(queue),
+            "".to_string(),
+            message.as_bytes().to_vec(),
+            100,
+            3,
+            0,
+        )
+        .await;
+    assert_eq!(ret.is_ok(), true, "should succeed"); 
+
+    let ret = client
+        .consume(String::from(queue), 3, 10)
+        .await;
+    let ret = ret.unwrap();
+    assert_eq!(ret.len(), 1, "should consume a message");
+
+    println!("results: {:#?}", ret);
 }
 
 #[tokio::test]
