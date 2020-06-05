@@ -1,5 +1,6 @@
 #[cfg(test)]
 use crate::*;
+use base64::decode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Result, Value};
 
@@ -83,26 +84,31 @@ async fn publish_message_should_be_ok() {
 async fn consume_message_should_be_ok() {
     let client = new_client(3, 10);
     let queue = "rustqueue";
-    let message = "hello, world";
+    let message = b"hello, world";
     let ret = client
         .publish(
             String::from(queue),
             "".to_string(),
-            message.as_bytes().to_vec(),
+            message.to_vec(),
             100,
             3,
             0,
         )
         .await;
-    assert_eq!(ret.is_ok(), true, "should succeed"); 
+    assert_eq!(ret.is_ok(), true, "should succeed");
 
-    let ret = client
-        .consume(String::from(queue), 3, 10)
-        .await;
+    let ret = client.consume(String::from(queue), 3, 10).await;
     let ret = ret.unwrap();
     assert_eq!(ret.len(), 1, "should consume a message");
+    let job = &ret[0];
+    let message_consumed = &decode(job.data.clone()).unwrap()[..];
+    assert_eq!(message, message_consumed, "message content should match");
 
     println!("results: {:#?}", ret);
+    println!(
+        "message_consumed: {:#?}",
+        String::from_utf8(message_consumed.to_vec()).unwrap()
+    );
 }
 
 #[tokio::test]

@@ -40,8 +40,8 @@ pub struct Job {
     pub namespace: String,
     /// The queue which holds the job
     pub queue: String,
-    /// The data holded by the job
-    pub data: Vec<u8>,
+    /// The data holded by the job, note that data is base64 encoded
+    pub data: String,
     /// The id of the job
     pub job_id: String,
     /// The time-to-live of the job

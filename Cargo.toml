@@ -19,3 +19,4 @@ serde = { version = "1.0.102", features = ["derive"] }
 [dev-dependencies]
 envmnt = "0.8.2"
 serde_json = "1.0.53"
+base64 = "0.12.1"
