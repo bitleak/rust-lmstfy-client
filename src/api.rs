@@ -67,9 +67,9 @@ pub struct DeadLetterInfo {
     /// The queue name
     pub queue: String,
     /// The size of the dead letters
-    pub size: u32,
+    pub deadletter_size: u32,
     /// The header of the letters
-    pub header: String,
+    pub deadletter_head: String,
 }
 
 #[derive(Deserialize)]
@@ -542,7 +542,6 @@ impl Client {
     /// * `queue` - A string that holds the queue name
     pub async fn queue_size(&self, queue: String) -> Result<u32> {
         let relative_path = Path::new(&queue)
-            .join(&queue)
             .join("size")
             .to_str()
             .unwrap()
@@ -632,7 +631,7 @@ impl Client {
             StatusCode::OK => response
                 .json::<DeadLetterInfo>()
                 .await
-                .map(|info| (info.size, info.header))
+                .map(|info| (info.deadletter_size, info.deadletter_head))
                 .map_err(|e| APIError {
                     err_type: ErrType::ResponseErr,
                     reason: e.to_string(),
