@@ -1,11 +1,11 @@
 [package]
 name = "lmstfy-client"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["hsiung <vjoke@foxmail.com>"]
 edition = "2018"
 description = "A rust client for lmstfy server"
-homepage = "https://github.com/vjoke/lmstfy-client.git"
-repository = "https://github.com/vjoke/lmstfy-client.git"
+homepage = "https://github.com/bitleak/rust-lmstfy-client"
+repository = "https://github.com/bitleak/rust-lmstfy-client.git"
 documentation = "https://docs.rs/lmstfy-client"
 license-file = "LICENSE.txt"
 readme = "README.md"
