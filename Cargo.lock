@@ -306,7 +306,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "lmstfy-client"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "base64 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "envmnt 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
