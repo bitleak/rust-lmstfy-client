@@ -1,4 +1,6 @@
 use crate::errors::{APIError, ErrType};
+use crate::retrier::{retry_async, fixed_retry_strategy};
+
 use reqwest::{header::HeaderValue, Client as HTTPClient, Method, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -21,7 +23,7 @@ pub struct Client {
     pub port: u32,
     /// Retry when `publish` failed
     pub retry: u32,
-    /// TODO: backoff time when retrying
+    /// Backoff milliseconds when retrying
     pub backoff: u32,
     /// http client which is used to communicate with server
     pub http_client: HTTPClient,
@@ -195,13 +197,14 @@ impl Client {
         }
 
         let query = [("ttl", ttl), ("tries", tries), ("delay", delay)];
-        self.request(
-            Method::PUT,
-            relative_path.as_str(),
-            Some(&query),
-            Some(data),
-        )
-        .await
+        retry_async(fixed_retry_strategy(self.backoff as u64, self.retry as usize), || {
+            Box::pin(self.request(
+                Method::PUT,
+                relative_path.as_str(),
+                Some(&query),
+                Some(data.clone()),
+            ))
+        }).await
     }
 
     /// Inner function to consume a job
@@ -372,6 +375,22 @@ impl Client {
 
 /// The API implementation for lmstfy
 impl Client {
+    /// Set parameters for retrying
+    /// 
+    /// # Arguments
+    /// 
+    /// * `retry` - A u32 value that holds the retry count
+    /// * `backoff` - A u32 value that holds the dalay milliseconds between retries
+    pub fn config_retry(
+        &mut self,
+        retry: u32,
+        backoff: u32,
+    ) -> Result<()> {
+        self.retry = retry;
+        self.backoff = backoff;
+        Ok(())
+    }
+    
     /// Publish task to the server
     ///
     /// # Arguments
